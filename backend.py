@@ -36,45 +36,37 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         tasks[task_id]["total"] = max_frames
         
         urls = []
-        # Retry 2 times with 20s timeout = Max 45s wait
-        for attempt in range(2):
-            try:
-                response = requests.get(nasaUrl, timeout=20)
-                response.raise_for_status()
-                text_content = response.content.decode('utf-8', errors='ignore')
-                raw_urls = list(set(re.findall(r'(https?://[^\s<"]+\.fits)', text_content)))
-                
-                filtered_urls = []
-                band_upper = band.strip().upper()
-                date_upper = start_date.strip().upper()
-                end_upper = end_date.strip().upper()
+        
+        try:
+            # 45-second timeout for the search query
+            response = requests.get(nasaUrl, timeout=(5, 45))
+            response.raise_for_status()
+            text_content = response.content.decode('utf-8', errors='ignore')
+            raw_urls = list(set(re.findall(r'(https?://[^\s<"]+\.fits)', text_content)))
+            
+            filtered_urls = []
+            band_upper = band.strip().upper()
+            date_upper = start_date.strip().upper()
+            end_upper = end_date.strip().upper()
 
-                for u in raw_urls:
-                    u_upper = u.upper()
-                    if date_upper and date_upper not in u_upper: continue
-                    if end_upper and end_upper not in u_upper: continue
-                    if band_upper and band_upper not in u_upper: continue
-                    filtered_urls.append(u)
-                
-                if (date_upper or band_upper) and len(filtered_urls) == 0:
-                    tasks[task_id]["status"] = "error"
-                    tasks[task_id]["msg"] = f"Strict filters applied. No images found matching Date: '{start_date}' and Band: '{band}'."
-                    return
+            for u in raw_urls:
+                u_upper = u.upper()
+                if date_upper and date_upper not in u_upper: continue
+                if end_upper and end_upper not in u_upper: continue
+                if band_upper and band_upper not in u_upper: continue
+                filtered_urls.append(u)
+            
+            if (date_upper or band_upper) and len(filtered_urls) == 0:
+                tasks[task_id]["status"] = "error"
+                tasks[task_id]["msg"] = f"Strict filters applied. No images found matching Date: '{start_date}' and Band: '{band}'."
+                return
 
-                urls = filtered_urls if (date_upper or band_upper) else [u for u in raw_urls if not u.endswith('.gz')]
-                break 
-            except requests.exceptions.Timeout:
-                if attempt == 1:
-                    tasks[task_id]["status"] = "error"
-                    tasks[task_id]["msg"] = "NASA search timed out. Their servers are extremely busy. Please try again in a minute."
-                    return
-                time.sleep(3)
-            except Exception as e:
-                if attempt == 1:
-                    tasks[task_id]["status"] = "error"
-                    tasks[task_id]["msg"] = f"NASA search error: {str(e)}"
-                    return
-                time.sleep(3)
+            urls = filtered_urls if (date_upper or band_upper) else [u for u in raw_urls if not u.endswith('.gz')]
+            
+        except requests.exceptions.RequestException as e:
+            tasks[task_id]["status"] = "error"
+            tasks[task_id]["msg"] = "NASA's database took too long to respond. Their servers are currently overloaded. Please try again in a minute."
+            return
 
         if not urls:
             tasks[task_id]["status"] = "error"
@@ -82,7 +74,6 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
             return
 
         urls.sort()
-        
         available_count = len(urls)
         target_urls = urls[offset : offset + max_frames]
         
@@ -116,12 +107,13 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
             cutout_url = f"{base_fits_url}?center={ra},{dec}&size={fov}"
             
             try:
-                res = requests.get(cutout_url, headers=headers, timeout=20)
+                # 45-second timeout for the download
+                res = requests.get(cutout_url, headers=headers, timeout=(5, 45))
                 res.raise_for_status()
                 data = res.content
             except Exception:
                 try:
-                    res = requests.get(base_fits_url, headers=headers, timeout=45)
+                    res = requests.get(base_fits_url, headers=headers, timeout=(5, 60))
                     res.raise_for_status()
                     data = res.content
                 except Exception as e:
@@ -170,7 +162,7 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
 
         if not frames:
             tasks[task_id]["status"] = "error"
-            tasks[task_id]["msg"] = f"Could not process images. {'; '.join(failed_files[:2])}"
+            tasks[task_id]["msg"] = "NASA's file server timed out while trying to download the FITS data. Please try again."
             return
 
         tasks[task_id]["status"] = "complete"
