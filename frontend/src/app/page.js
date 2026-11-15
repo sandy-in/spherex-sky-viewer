@@ -32,7 +32,7 @@ export default function Home() {
   const [fov, setFov] = useState('0.1');
   const [startDate, setStartDate] = useState('');
   const [band, setBand] = useState('');
-  const [maxFrames, setMaxFrames] = useState(4); 
+  const [maxFrames, setMaxFrames] = useState(2); 
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [progress, setProgress] = useState(0);
@@ -66,7 +66,6 @@ export default function Home() {
     setSupabase(client);
 
     // SILENT WAKE UP PING FOR RENDER BACKEND
-    // Pings Render the moment the page loads so it's awake for the user
     fetch('https://spherex-backend-suez.onrender.com/').catch(() => {});
 
     const handleAuthCallback = async () => {
@@ -113,9 +112,9 @@ export default function Home() {
     setStatusText('Starting job...'); setProgress(0); setTotalProgress(maxFrames);
     setIsPlaying(false); setCurrentIndex(0); setOffset(newOffset); setAiAnalysis(null); setShowAiOverlay(false);
     
-    // 65-second abort controller to catch Vercel timeouts
+    // 15-second abort controller to catch NASA timeouts quickly
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 65000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       const query = new URLSearchParams({ 
@@ -160,7 +159,7 @@ export default function Home() {
     } catch (err) {
       // ROBUST ERROR HANDLING
       if (err.name === 'AbortError') {
-         setErrorMsg("Request timed out. NASA's servers might be down or Render is waking up.");
+         setErrorMsg("NASA's servers are taking too long to respond (Timeout). Please try again later.");
       } else if (err.message && err.message.includes('Failed to fetch')) {
          setErrorMsg("Connection dropped. The server is taking too long to wake up. Please wait 1 minute and try again.");
       } else {

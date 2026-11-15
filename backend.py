@@ -40,7 +40,8 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         urls = []
         
         try:
-            response = requests.get(nasaUrl, timeout=(5, 15))
+            # STRICT 5 SECOND TIMEOUT FOR SEARCH
+            response = requests.get(nasaUrl, timeout=(3, 5))
             response.raise_for_status()
             text_content = response.content.decode('utf-8', errors='ignore')
             raw_urls = list(set(re.findall(r'(https?://[^\s<"]+\.fits)', text_content)))
@@ -64,9 +65,9 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
 
             urls = filtered_urls if (date_upper or band_upper) else [u for u in raw_urls if not u.endswith('.gz')]
             
-        except requests.exceptions.RequestException as e:
+        except requests.exceptions.RequestException:
             tasks[task_id]["status"] = "error"
-            tasks[task_id]["msg"] = "NASA's IRSA database took too long to respond. Please try again in a minute."
+            tasks[task_id]["msg"] = "NASA's IRSA database is currently unresponsive due to high traffic. Please try again in a few minutes."
             return
 
         if not urls:
@@ -94,12 +95,11 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
             tasks[task_id]["progress"] = i + 1
             tasks[task_id]["status"] = f"Downloading frame {i+1}/{len(target_urls)}..."
 
-            # ONLY REQUEST THE CUTOUT. If this fails, we skip the frame (prevents OOM crash)
             cutout_url = f"{base_fits_url}?center={ra},{dec}&size={fov}"
             
             try:
-                # Stream to a temp file on disk to save RAM
-                with requests.get(cutout_url, headers=headers, timeout=(5, 30), stream=True) as res:
+                # STRICT 10 SECOND TIMEOUT FOR DOWNLOAD
+                with requests.get(cutout_url, headers=headers, timeout=(3, 10), stream=True) as res:
                     res.raise_for_status()
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".fits") as tmp:
                         for chunk in res.iter_content(chunk_size=8192):
@@ -117,7 +117,6 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
                     for hdu in hdul:
                         if hdu.data is not None and hdu.data.ndim >= 2:
                             if hdu.data.shape[0] > 10 and hdu.data.shape[1] > 10:
-                                # Only copy the 2D slice to RAM
                                 image_data = np.array(hdu.data, dtype=np.float32)
                                 if image_data.ndim == 3:
                                     image_data = image_data[0] 
@@ -139,19 +138,18 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
                     img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
                     frames.append({"url": f"data:image/png;base64,{img_str}", "name": base_fits_url.split('/')[-1]})
                 
-                # Cleanup
                 os.remove(tmp_path)
                 del image_data, norm, pixel_data, img
                 gc.collect()
 
-            except Exception as e:
+            except Exception:
                 if 'tmp_path' in locals() and os.path.exists(tmp_path):
                     os.remove(tmp_path)
                 continue
 
         if not frames:
             tasks[task_id]["status"] = "error"
-            tasks[task_id]["msg"] = "NASA's cutout server timed out while trying to download the FITS data. Please try again."
+            tasks[task_id]["msg"] = "NASA's file server timed out while trying to download the FITS data."
             return
 
         tasks[task_id]["status"] = "complete"
