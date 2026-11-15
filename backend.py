@@ -36,10 +36,10 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         tasks[task_id]["total"] = max_frames
         
         urls = []
-        for attempt in range(3):
+        # Retry 2 times with 20s timeout = Max 45s wait
+        for attempt in range(2):
             try:
-                # CHANGED TO 45 SECONDS TO FAIL FAST
-                response = requests.get(nasaUrl, timeout=45)
+                response = requests.get(nasaUrl, timeout=20)
                 response.raise_for_status()
                 text_content = response.content.decode('utf-8', errors='ignore')
                 raw_urls = list(set(re.findall(r'(https?://[^\s<"]+\.fits)', text_content)))
@@ -64,17 +64,17 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
                 urls = filtered_urls if (date_upper or band_upper) else [u for u in raw_urls if not u.endswith('.gz')]
                 break 
             except requests.exceptions.Timeout:
-                if attempt == 2:
+                if attempt == 1:
                     tasks[task_id]["status"] = "error"
-                    tasks[task_id]["msg"] = "NASA search timed out. Their servers are extremely busy."
+                    tasks[task_id]["msg"] = "NASA search timed out. Their servers are extremely busy. Please try again in a minute."
                     return
-                time.sleep(5)
+                time.sleep(3)
             except Exception as e:
-                if attempt == 2:
+                if attempt == 1:
                     tasks[task_id]["status"] = "error"
                     tasks[task_id]["msg"] = f"NASA search error: {str(e)}"
                     return
-                time.sleep(5)
+                time.sleep(3)
 
         if not urls:
             tasks[task_id]["status"] = "error"
@@ -116,7 +116,7 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
             cutout_url = f"{base_fits_url}?center={ra},{dec}&size={fov}"
             
             try:
-                res = requests.get(cutout_url, headers=headers, timeout=30)
+                res = requests.get(cutout_url, headers=headers, timeout=20)
                 res.raise_for_status()
                 data = res.content
             except Exception:

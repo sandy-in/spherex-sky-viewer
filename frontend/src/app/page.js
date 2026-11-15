@@ -110,14 +110,23 @@ export default function Home() {
     
     setIsPlaying(false); setCurrentIndex(0); setOffset(newOffset); setAiAnalysis(null); setShowAiOverlay(false);
     
+    // 65-second client-side timeout as a safety net
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 65000);
+
     try {
       const query = new URLSearchParams({ 
         ra, dec, fov, start_date: startDate, end_date: '', band, 
         max_frames: framesToFetch, fps, offset: newOffset 
       }).toString();
       
-      const response = await fetch(`/api/image?${query}`, { method: 'POST' });
+      const response = await fetch(`/api/image?${query}`, { 
+        method: 'POST',
+        signal: controller.signal
+      });
       
+      clearTimeout(timeoutId);
+
       if (!response.ok) {
         if (response.status === 502 || response.status === 504) {
            throw new Error("The backend is waking up from sleep. Please wait 30 seconds and try again.");
@@ -148,7 +157,12 @@ export default function Home() {
       setTotalAvailable(data.total_available || 0);
       setStatusText('');
     } catch (err) {
-      setErrorMsg(err.message); setStatusText('');
+      if (err.name === 'AbortError') {
+         setErrorMsg("Request took too long. NASA's servers might be down or Render is waking up.");
+      } else {
+         setErrorMsg(err.message);
+      }
+      setStatusText('');
     } finally { setLoading(false); }
   };
 
