@@ -17,20 +17,19 @@ export async function GET(request) {
     const urlRegex = /(https?:\/\/[^\s<"]+)/g;
     const allUrls = xmlText.match(urlRegex) || [];
     
-    // Generate FITS cutout URLs (no JPEG conversion)
-    const fitsUrls = [...new Set(allUrls
+    const urls = [...new Set(allUrls
       .map(u => u.replace(/&amp;/g, '&'))
       .filter(u => u.includes('.fits') || u.includes('/ibe/data/'))
     )].map(fitsUrl => {
-      const cutoutBase = fitsUrl.replace('/data/', '/cutout/');
-      return `${cutoutBase}?center=${ra},${dec}&size=${fov}`;
+      // Use the correct angular size format and request an uncompressed file
+      return `${fitsUrl}?center=${ra},${dec}&size=0.1&gzip=false`;
     });
 
     return Response.json({ 
       success: true, 
-      count: fitsUrls.length, 
-      urls: fitsUrls.slice(0, 9),
-      debug: "FITS cutout URLs generated!"
+      count: urls.length, 
+      urls: urls.slice(0, 1),
+      debug: "Cutout URLs generated with angular size and gzip=false"
     });
 
   } catch (error) {
