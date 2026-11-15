@@ -19,9 +19,10 @@ const TARGETS = [
 ];
 
 const InfoTip = ({ text }) => (
-  <div className="group relative inline-block ml-2 cursor-help">
+  <div className="group relative inline-block ml-2 cursor-help z-50">
     <div className="w-4 h-4 rounded-full bg-gray-600 text-gray-200 text-[10px] font-bold flex items-center justify-center hover:bg-gray-500">i</div>
-    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-48 p-2 bg-gray-900 border border-gray-600 text-white text-xs rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-center">
+    {/* Opens downwards now to avoid being cut off at the top */}
+    <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 w-48 p-2 bg-gray-900 border border-gray-600 text-white text-xs rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-center">
       {text}
     </div>
   </div>
@@ -37,7 +38,10 @@ export default function Home() {
   const [fov, setFov] = useState('0.1');
   const [startDate, setStartDate] = useState('');
   const [band, setBand] = useState('');
-  const [maxFrames, setMaxFrames] = useState(10); 
+  
+  // Default frames set to 2
+  const [maxFrames, setMaxFrames] = useState(2); 
+  
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [progress, setProgress] = useState(0);
@@ -102,13 +106,28 @@ export default function Home() {
   const handleSearch = async (e, newOffset = 0) => {
     if (e) e.preventDefault();
     setLoading(true); setFrames([]); setNotices([]); setDiffImage(null); setErrorMsg(null);
-    setStatusText('Starting job...'); setProgress(0); setTotalProgress(maxFrames);
+    setStatusText('Starting job...'); setProgress(0); 
+    
+    // Safety check: If maxFrames is empty or invalid, default to 2
+    const framesToFetch = Math.max(2, parseInt(maxFrames) || 2);
+    setTotalProgress(framesToFetch);
+    
     setIsPlaying(false); setCurrentIndex(0); setOffset(newOffset); setAiAnalysis(null); setShowAiOverlay(false);
     
     try {
-      const query = new URLSearchParams({ ra, dec, fov, start_date: startDate, end_date: '', band, max_frames: maxFrames, fps, offset: newOffset }).toString();
+      const query = new URLSearchParams({ 
+        ra, dec, fov, start_date: startDate, end_date: '', band, 
+        max_frames: framesToFetch, fps, offset: newOffset 
+      }).toString();
+      
       const response = await fetch(`/api/image?${query}`, { method: 'POST' });
-      if (!response.ok) throw new Error("Failed to connect to backend.");
+      
+      if (!response.ok) {
+        if (response.status === 502 || response.status === 504) {
+           throw new Error("The backend is waking up from sleep. Please wait 30 seconds and try again.");
+        }
+        throw new Error("Failed to connect to backend.");
+      }
       
       const { task_id } = await response.json();
       let isDone = false, attempts = 0;
@@ -230,7 +249,6 @@ export default function Home() {
           <p className="text-xs text-gray-400">International Discovery Platform</p>
         </div>
         <div className="flex items-center gap-4">
-          {errorMsg && <div className="bg-red-900/80 text-red-200 px-4 py-2 rounded border border-red-700 text-sm">⚠️ {errorMsg}</div>}
           {user ? (
             <div className="flex items-center gap-3 bg-gray-800 px-3 py-1 rounded-full border border-gray-600">
               <img src={user.user_metadata?.avatar_url || 'https://via.placeholder.com/30'} alt="Profile" className="w-8 h-8 rounded-full" />
@@ -274,6 +292,17 @@ export default function Home() {
         </aside>
 
         <section className="flex-1 bg-black flex flex-col items-center justify-center relative p-8">
+          
+          {/* CENTERED ERROR MESSAGE */}
+          {errorMsg && !loading && frames.length === 0 && (
+            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-900/90 text-red-200 px-8 py-6 rounded-lg border border-red-700 text-center z-50 shadow-2xl max-w-lg">
+              <p className="font-bold text-xl mb-2">⚠️ Connection Error</p>
+              <p>{errorMsg}</p>
+              <p className="text-sm mt-4 text-gray-300">If this is the first request in a while, the backend is waking up. Please wait 30 seconds and click Fetch Data again.</p>
+              <button onClick={() => setErrorMsg(null)} className="mt-4 bg-red-700 hover:bg-red-600 px-4 py-2 rounded font-bold">Dismiss</button>
+            </div>
+          )}
+
           {loading && (
              <div className="text-center z-10 bg-gray-900/90 p-8 rounded-lg border border-gray-700 w-96 shadow-2xl">
                <p className="text-blue-400 text-lg font-bold mb-4">{statusText}</p>

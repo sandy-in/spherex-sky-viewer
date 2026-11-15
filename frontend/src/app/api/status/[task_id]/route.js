@@ -1,3 +1,5 @@
+export const maxDuration = 60;
+
 export async function GET(request, { params }) {
   const { task_id } = await params; 
   const backendUrl = process.env.NEXT_PUBLIC_PYTHON_URL || 'http://127.0.0.1:8000';

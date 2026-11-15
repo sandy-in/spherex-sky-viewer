@@ -1,3 +1,5 @@
+export const maxDuration = 60; // Allow up to 60 seconds for Render to wake up
+
 export async function POST(request) {
   const { searchParams } = new URL(request.url);
   const ra = searchParams.get('ra');
@@ -6,7 +8,7 @@ export async function POST(request) {
   const start_date = searchParams.get('start_date') || '';
   const end_date = searchParams.get('end_date') || '';
   const band = searchParams.get('band') || '';
-  const max_frames = searchParams.get('max_frames') || '10';
+  const max_frames = searchParams.get('max_frames') || '2';
   const fps = searchParams.get('fps') || '1';
   const offset = searchParams.get('offset') || '0';
 
