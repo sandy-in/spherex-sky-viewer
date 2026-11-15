@@ -12,12 +12,6 @@ const TARGETS = [
   { name: "Sirius", ra: "101.287", dec: "-16.716", desc: "Brightest Star" },
 ];
 
-const DEFAULT_POSTS = [
-  { id: '1', profiles: { full_name: 'NASA_JPL_Observer', avatar_url: 'https://api.dicebear.com/7.x/bottts/svg?seed=NASA' }, note: 'Detected a potential asteroid in Sector 4. Moving at ~15 arcsec/hr.', likes: 12 },
-  { id: '2', profiles: { full_name: 'Astro_Enthusiast', avatar_url: 'https://api.dicebear.com/7.x/bottts/svg?seed=Astro' }, note: 'Barnard\'s Star shows significant proper motion in this SPHEREx dataset.', likes: 8 },
-  { id: '3', profiles: { full_name: 'Sandy_in', avatar_url: 'https://api.dicebear.com/7.x/bottts/svg?seed=Sandy' }, note: 'Possible brown dwarf anomaly, needs further verification.', likes: 4 }
-];
-
 const InfoTip = ({ text }) => (
   <div className="group relative inline-block ml-2 cursor-help z-50">
     <div className="w-4 h-4 rounded-full bg-gray-600 text-gray-200 text-[10px] font-bold flex items-center justify-center hover:bg-gray-500">i</div>
@@ -30,10 +24,10 @@ const InfoTip = ({ text }) => (
 export default function Home() {
   const [supabase, setSupabase] = useState(null);
   const [user, setUser] = useState(null);
-  const [posts, setPosts] = useState(DEFAULT_POSTS); // Start with defaults
+  const [posts, setPosts] = useState([]);
   
-  const [ra, setRa] = useState('304.693508808');
-  const [dec, setDec] = useState('42.4436872991');
+  const [ra, setRa] = useState('269.452');
+  const [dec, setDec] = useState('4.693');
   const [fov, setFov] = useState('0.1');
   const [startDate, setStartDate] = useState('');
   const [band, setBand] = useState('');
@@ -48,11 +42,13 @@ export default function Home() {
   const [errorMsg, setErrorMsg] = useState(null); 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  
+  const [offset, setOffset] = useState(0);
+  const [totalAvailable, setTotalAvailable] = useState(0);
+
   const [diffImage, setDiffImage] = useState(null);
   const [diffContrast, setDiffContrast] = useState(1.0); 
   const [diffInfo, setDiffInfo] = useState({ f1: 0, f2: 0 });
-  const [fps, setFps] = useState(3); // Increased default FPS for demo
+  const [fps, setFps] = useState(3); 
 
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -61,6 +57,8 @@ export default function Home() {
   const [showModal, setShowModal] = useState(false);
   const [note, setNote] = useState('');
   const [shareError, setShareError] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [replyContent, setReplyContent] = useState('');
 
   useEffect(() => {
     const client = createClient();
@@ -70,8 +68,8 @@ export default function Home() {
       const url = new URL(window.location.href);
       const code = url.searchParams.get('code');
       if (code) {
-        const { data, error } = await client.auth.exchangeCodeForSession(code);
-        if (!error && data.session) {
+        const { data } = await client.auth.exchangeCodeForSession(code);
+        if (data.session) {
           window.history.replaceState({}, document.title, window.location.pathname);
           setUser(data.session.user);
         }
@@ -85,7 +83,14 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Playback Loop
+  const fetchPosts = async () => {
+    if (!supabase) return;
+    const { data, error } = await supabase.from('posts').select(`*, profiles (full_name, avatar_url), replies (*, profiles (full_name))`).order('created_at', { ascending: false }).limit(20);
+    if (!error && data) setPosts(data);
+  };
+
+  useEffect(() => { if (supabase) fetchPosts(); }, [supabase]);
+
   useEffect(() => {
     let interval;
     if (isPlaying && frames.length > 1) {
@@ -96,47 +101,35 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [isPlaying, frames, fps]);
 
-  const fetchPosts = async () => {
-    if (!supabase) return;
-    const { data, error } = await supabase.from('posts').select(`*, profiles (full_name, avatar_url)`).order('created_at', { ascending: false }).limit(20);
-    if (!error && data && data.length > 0) {
-      setPosts(data);
-    }
-  };
-
-  useEffect(() => { if (supabase) fetchPosts(); }, [supabase]);
-
-  const handleSearch = async (e) => {
+  const handleSearch = async (e, newOffset = 0) => {
     if (e) e.preventDefault();
     setLoading(true); setFrames([]); setNotices([]); setDiffImage(null); setErrorMsg(null);
-    setStatusText('Starting job...'); setProgress(0); 
+    setStatusText('Starting job...'); setProgress(0); setTotalProgress(maxFrames);
+    setIsPlaying(false); setCurrentIndex(0); setOffset(newOffset); setAiAnalysis(null); setShowAiOverlay(false);
     
-    setTotalProgress(maxFrames);
-    setIsPlaying(false); setCurrentIndex(0); setAiAnalysis(null); setShowAiOverlay(false);
-    
+    // FRONTEND TIMEOUT TO PREVENT INFINITE HANGS
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 65000);
 
     try {
       const query = new URLSearchParams({ 
         ra, dec, fov, start_date: startDate, end_date: '', band, 
-        max_frames: maxFrames, fps, offset: 0 
+        max_frames: maxFrames, fps, offset: newOffset 
       }).toString();
       
       const response = await fetch(`/api/image?${query}`, { 
         method: 'POST',
         signal: controller.signal
       });
-      
       clearTimeout(timeoutId);
-
+      
       if (!response.ok) throw new Error("Failed to connect to backend.");
       
       const { task_id } = await response.json();
       let isDone = false, attempts = 0;
       
-      while (!isDone && attempts < 60) {
-        await new Promise(r => setTimeout(r, 1000));
+      while (!isDone && attempts < 150) {
+        await new Promise(r => setTimeout(r, 2000));
         attempts++;
         const statusRes = await fetch(`/api/status/${task_id}`);
         if (!statusRes.ok) throw new Error("Lost connection to backend.");
@@ -152,9 +145,14 @@ export default function Home() {
       const data = await imgRes.json();
       setFrames(data.frames);
       setNotices(data.notices || []);
+      setTotalAvailable(data.total_available || 0);
       setStatusText('');
     } catch (err) {
-      setErrorMsg(err.message);
+      if (err.name === 'AbortError') {
+         setErrorMsg("Request timed out. NASA's servers might be down or Render is waking up.");
+      } else {
+         setErrorMsg(err.message);
+      }
       setStatusText('');
     } finally { setLoading(false); }
   };
@@ -172,17 +170,10 @@ export default function Home() {
       if (data.summary) {
         setAiAnalysis(data);
         setShowAiOverlay(true);
-      } else {
-        alert(data.error || "AI failed to analyze.");
       }
     } catch (err) {
       alert("Network error analyzing image.");
     } finally { setAiLoading(false); }
-  };
-
-  const handleLogin = async () => {
-    if (!supabase) return;
-    await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: `${window.location.origin}/auth/callback` } });
   };
 
   const submitPost = async () => {
@@ -191,7 +182,7 @@ export default function Home() {
     try {
       const { error } = await supabase.from('posts').insert({
         user_id: user.id, ra: parseFloat(ra), dec: parseFloat(dec), note: note,
-        image_url: frames[currentIndex].url
+        image_url: frames.length > 0 ? frames[currentIndex].url : null
       });
       if (error) throw error;
       setShowModal(false); setNote(''); fetchPosts();
@@ -231,25 +222,23 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-900 text-white font-sans flex flex-col h-screen">
-      
-      {/* HEADER */}
       <header className="bg-gray-950 p-4 border-b border-gray-700 flex justify-between items-center shrink-0">
         <div className="flex items-center gap-4">
-          <img src="/logo.png" alt="Paradigm Shifters" className="w-12 h-12 object-contain rounded-full" />
+          <img src="/logo.png" alt="Logo" className="w-12 h-12 object-contain rounded-full" onError={(e) => e.target.style.display='none'} />
           <div>
             <h1 className="text-2xl font-bold text-blue-400 tracking-wider">SPHEREx Sky Viewer</h1>
             <p className="text-xs text-gray-400 font-semibold tracking-widest uppercase">PARADIGM SHIFTERS</p>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <p className="text-[10px] text-gray-500">Researcher & Site Builder: <span className="text-gray-300 font-bold">Shanthosh R.</span></p>
+        <div className="flex flex-col items-end">
+          <p className="text-[10px] text-gray-500 mb-1">Researcher & Site Builder: <span className="text-gray-300 font-bold">Shanthosh R.</span></p>
           {user ? (
-            <div className="flex items-center gap-3 bg-gray-800 px-3 py-1 rounded-full border border-gray-600">
-              <span className="text-sm font-bold">{user.user_metadata?.full_name || 'User'}</span>
-              <button onClick={() => supabase.auth.signOut()} className="text-xs text-red-400 ml-2">Logout</button>
+            <div className="flex gap-2 items-center">
+              <span className="text-sm font-bold bg-gray-800 px-3 py-1 rounded-full">{user.user_metadata?.full_name || 'User'}</span>
+              <button onClick={() => supabase.auth.signOut()} className="text-xs text-red-400">Logout</button>
             </div>
           ) : (
-            <button onClick={handleLogin} className="bg-white text-gray-900 font-bold py-2 px-4 rounded hover:bg-gray-200 transition-colors">Sign in with Google</button>
+            <button onClick={() => supabase?.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: `${window.location.origin}/auth/callback` } })} className="bg-white text-gray-900 font-bold py-1 px-4 rounded text-sm">Sign in with Google</button>
           )}
         </div>
       </header>
@@ -268,23 +257,28 @@ export default function Home() {
           <div className="space-y-3">
             <div><label className="text-xs text-gray-400 mb-1 block">Right Ascension</label><input type="text" value={ra} onChange={(e) => setRa(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm" /></div>
             <div><label className="text-xs text-gray-400 mb-1 block">Declination</label><input type="text" value={dec} onChange={(e) => setDec(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm" /></div>
-            <div><label className="text-xs text-gray-400 mb-1 block">Field of View</label><input type="number" step="0.01" value={fov} onChange={(e) => setFov(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm" /></div>
           </div>
           <hr className="border-gray-700" />
-          <div>
+          <div className="space-y-3">
             <label className="text-xs font-bold text-blue-300 uppercase tracking-widest mb-2 flex items-center">
               Data Filters <InfoTip text="Filter by dates or bands." />
             </label>
-            <div className="space-y-3">
-              <div><input type="text" value={startDate} onChange={(e) => setStartDate(e.target.value)} placeholder="YYYYWW" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm" /></div>
-              <div><input type="text" value={band} onChange={(e) => setBand(e.target.value)} placeholder="Filter by Band" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm" /></div>
-              <div><input type="number" min="2" max="10" value={maxFrames} onChange={(e) => setMaxFrames(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm" /></div>
-            </div>
+            <input type="text" value={startDate} onChange={(e) => setStartDate(e.target.value)} placeholder="YYYYWW" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm" />
+            <input type="text" value={band} onChange={(e) => setBand(e.target.value)} placeholder="Filter by Band" className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm" />
+            <input type="number" min="2" max="10" value={maxFrames} onChange={(e) => setMaxFrames(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm" />
           </div>
           <button onClick={handleSearch} disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded mt-4 transition-colors">{loading ? 'Processing...' : 'Fetch Data'}</button>
         </aside>
 
         <section className="flex-1 bg-black flex flex-col items-center justify-center relative p-8">
+          {errorMsg && !loading && frames.length === 0 && (
+            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-900/90 text-red-200 px-8 py-6 rounded-lg border border-red-700 text-center z-50 shadow-2xl max-w-lg">
+              <p className="font-bold text-xl mb-2">⚠️ Connection Error</p>
+              <p>{errorMsg}</p>
+              <button onClick={() => setErrorMsg(null)} className="mt-4 bg-red-700 hover:bg-red-600 px-4 py-2 rounded font-bold">Dismiss</button>
+            </div>
+          )}
+
           {loading && (
              <div className="text-center z-10 bg-gray-900/90 p-8 rounded-lg border border-gray-700 w-96 shadow-2xl">
                <p className="text-blue-400 text-lg font-bold mb-4">{statusText}</p>
@@ -304,28 +298,19 @@ export default function Home() {
               <div className="w-full aspect-square bg-gray-900 rounded-lg overflow-hidden border border-gray-700 shadow-2xl relative">
                 <img src={diffImage ? diffImage : frames[currentIndex].url} alt="Viewer" className="w-full h-full object-contain" />
                 
-                {/* AI BOUNDING BOXES */}
                 {showAiOverlay && aiAnalysis && (
                   <div className="absolute inset-0 pointer-events-none z-10">
                     {aiAnalysis.objects && aiAnalysis.objects.map((obj, idx) => (
-                      <div key={idx} 
-                        className="absolute border-2 border-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.5)]"
-                        style={{
-                          top: `${Math.max(0, obj.box[0])}%`, left: `${Math.max(0, obj.box[1])}%`, 
-                          height: `${obj.box[2] - obj.box[0]}%`, width: `${obj.box[3] - obj.box[1]}%`
-                        }}
-                      >
-                        <span className="absolute -top-6 left-0 bg-yellow-500 text-black text-[10px] font-bold px-1 rounded shadow whitespace-nowrap">
-                          {obj.label}
-                        </span>
+                      <div key={idx} className="absolute border-2 border-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.5)]" style={{ top: `${obj.box[0]}%`, left: `${obj.box[1]}%`, height: `${obj.box[2] - obj.box[0]}%`, width: `${obj.box[3] - obj.box[1]}%` }}>
+                        <span className="absolute -top-6 left-0 bg-yellow-500 text-black text-[10px] font-bold px-1 rounded shadow whitespace-nowrap">{obj.label}</span>
                       </div>
                     ))}
                   </div>
                 )}
 
                 <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-2 text-xs font-mono text-gray-300 flex justify-between z-20">
-                  {diffImage ? <span className="text-green-400 font-bold">Difference: {diffInfo.f1} vs {diffInfo.f2}</span> : <span>Frame {currentIndex + 1}/{frames.length}</span>}
-                  <span className="truncate max-w-xs">{diffImage ? "Subtracted" : frames[currentIndex].name}</span>
+                  <span>Frame {currentIndex + 1}/{frames.length}</span>
+                  <span className="truncate">{diffImage ? "Subtracted" : frames[currentIndex].name}</span>
                 </div>
               </div>
 
@@ -347,55 +332,37 @@ export default function Home() {
                   {isPlaying && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>}
                 </button>
                 <button onClick={handleBlink} disabled={frames.length === 0} className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold flex items-center justify-center">
-                  Blink <InfoTip text="Flashes between first and last image." />
+                  Blink <InfoTip text="Flashes between images." />
                 </button>
               </div>
 
               <button onClick={handleAiAnalyze} disabled={frames.length === 0 || aiLoading} className="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold text-black flex items-center justify-center">
-                {aiLoading ? 'Analyzing with AI...' : '✨ AI Analyze Image'} 
+                {aiLoading ? 'Analyzing...' : '✨ AI Analyze Image'} 
               </button>
 
-              {/* AI SUMMARY BOX MOVED HERE */}
               {showAiOverlay && aiAnalysis && (
                 <div className="bg-black/80 border border-yellow-500 text-yellow-200 p-3 rounded text-sm">
-                  <div className="flex justify-between items-center mb-1 border-b border-yellow-500/30 pb-1">
-                    <strong className="text-yellow-400">🤖 AI Summary</strong>
-                    <button onClick={() => setShowAiOverlay(false)} className="text-red-400 hover:text-red-300 font-bold">✕</button>
-                  </div>
+                  <strong className="text-yellow-400 block mb-1">🤖 AI Summary</strong>
                   <p>{aiAnalysis.summary}</p>
                 </div>
               )}
 
               <div className="border border-gray-600 p-3 rounded bg-gray-900">
-                <button onClick={() => handleSubtract()} disabled={frames.length < 2} className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold mb-3 flex items-center justify-center">
-                  Subtract First & Last <InfoTip text="Highlights moving objects." />
-                </button>
-                {diffImage && (
-                  <div className="mt-2">
-                    <label className="text-xs text-gray-400 mb-1 flex justify-between"><span>Amplify Motion</span> <span>{diffContrast}x</span></label>
-                    <input type="range" min="1" max="10" step="0.5" value={diffContrast} onChange={(e) => { const val = parseFloat(e.target.value); setDiffContrast(val); handleSubtract(val); }} className="w-full" />
-                  </div>
-                )}
+                <button onClick={() => handleSubtract()} disabled={frames.length < 2} className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold mb-3">Subtract First & Last</button>
+                {diffImage && <input type="range" min="1" max="10" step="0.5" value={diffContrast} onChange={(e) => { setDiffContrast(parseFloat(e.target.value)); handleSubtract(); }} className="w-full" />}
               </div>
               
-              <button onClick={openAladin} className="w-full bg-indigo-600 hover:bg-indigo-500 py-2 rounded text-sm font-bold flex items-center justify-center">
-                Aladin Overlay (Gaia/WISE) <InfoTip text="Opens a professional sky map." />
-              </button>
-
-              <div>
-                <label className="text-xs text-gray-400 mb-1 flex justify-between"><span>Animation Speed (FPS)</span> <span>{fps}</span></label>
-                <input type="range" min="0.5" max="5" step="0.5" value={fps} onChange={(e) => setFps(parseFloat(e.target.value))} className="w-full" />
-              </div>
+              <button onClick={openAladin} className="w-full bg-indigo-600 hover:bg-indigo-500 py-2 rounded text-sm font-bold">Aladin Overlay (Gaia/WISE)</button>
             </div>
           </div>
 
-          {/* COMMUNITY WITH DEFAULTS */}
           <div className="flex-1 overflow-y-auto p-6 bg-gray-850">
             <h3 className="text-xs font-bold text-blue-300 uppercase tracking-widest mb-4 flex justify-between items-center">
               Community Findings
               {frames.length > 0 && user && <button onClick={() => setShowModal(true)} className="bg-green-500 text-white text-xs px-2 py-1 rounded hover:bg-green-400">+ Share</button>}
             </h3>
             <div className="space-y-3 pb-10">
+              {posts.length === 0 && <p className="text-xs text-gray-500 text-center">No findings shared yet.</p>}
               {posts.map((post) => (
                 <div key={post.id} className="bg-gray-900 p-3 rounded border border-gray-700 text-sm">
                   {post.image_url && <img src={post.image_url} className="w-full h-24 object-cover rounded mb-2" />}
@@ -427,3 +394,4 @@ export default function Home() {
     </main>
   );
 }
+// FINAL LINE - DO NOT DELETE

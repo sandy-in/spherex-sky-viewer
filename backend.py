@@ -25,99 +25,105 @@ app.add_middleware(
 
 tasks = {}
 
-def generate_synthetic_image(offset_x=0, offset_y=0, seed=42):
-    np.random.seed(seed)
-    data = np.random.normal(1000, 50, (400, 400))
-    
-    # Static stars
-    for _ in range(80):
-        x, y = np.random.randint(10, 390, 2)
-        brightness = np.random.randint(2000, 8000)
-        data[y-2:y+3, x-2:x+3] += brightness
-        
-    # Moving object (asteroid)
-    ax, ay = 200 + offset_x, 200 + offset_y
-    data[ay-4:ay+5, ax-4:ax+5] += 15000
-    
-    norm = ImageNormalize(data, interval=ZScaleInterval())
-    pixel_data = (norm(data) * 255).astype(np.uint8)
-    img = Image.fromarray(pixel_data)
-    img = img.resize((400, 400), Image.Resampling.LANCZOS)
-    buffered = io.BytesIO()
-    img.save(buffered, format="PNG")
-    return base64.b64encode(buffered.getvalue()).decode('utf-8')
-
 def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, end_date: str, band: str, max_frames: int, fps: float, offset: int):
     try:
+        max_frames = min(max(2, max_frames), 10) 
+        notices = []
+        
+        nasaUrl = f"https://irsa.ipac.caltech.edu/SIA?POS=circle+{ra}+{dec}+{fov}&COLLECTION=spherex_qr3"
         tasks[task_id]["status"] = "Contacting NASA servers..."
         tasks[task_id]["progress"] = 0
-
-        # HIGH AVAILABILITY SIMULATED DATASET
-        if ra.startswith("269.4"):
-            tasks[task_id]["status"] = "Generating local simulated dataset..."
-            time.sleep(1) 
-            
-            notices = ["High-Availability Mode: NASA's IRSA servers are currently down. Loading simulated dataset so you can test the UI, Blink, and AI features."]
-            tasks[task_id]["notices"] = notices
-            tasks[task_id]["total_available"] = 4
-            tasks[task_id]["total"] = 4
-            
-            frames = []
-            # 4 frames with an obviously moving object
-            frames.append({"url": f"data:image/png;base64,{generate_synthetic_image(0, 0, 42)}", "name": "SIMULATED_2026W20_2A_0001.fits"})
-            frames.append({"url": f"data:image/png;base64,{generate_synthetic_image(20, 15, 43)}", "name": "SIMULATED_2026W20_2A_0002.fits"})
-            frames.append({"url": f"data:image/png;base64,{generate_synthetic_image(40, 30, 44)}", "name": "SIMULATED_2026W20_2A_0003.fits"})
-            frames.append({"url": f"data:image/png;base64,{generate_synthetic_image(60, 45, 45)}", "name": "SIMULATED_2026W20_2A_0004.fits"})
-            
-            tasks[task_id]["status"] = "complete"
-            tasks[task_id]["frames"] = frames
-            tasks[task_id]["fps"] = fps
-            tasks[task_id]["offset"] = 0
-            return
-
-        # Normal NASA fetch
-        nasaUrl = f"https://irsa.ipac.caltech.edu/SIA?POS=circle+{ra}+{dec}+{fov}&COLLECTION=spherex_qr3"
+        tasks[task_id]["total"] = max_frames
+        
+        urls = []
+        
         try:
-            response = requests.get(nasaUrl, timeout=(5, 15))
+            # STRICT TIMEOUT: Connect in 5s, Read in 20s
+            response = requests.get(nasaUrl, timeout=(5, 20))
             response.raise_for_status()
             text_content = response.content.decode('utf-8', errors='ignore')
             raw_urls = list(set(re.findall(r'(https?://[^\s<"]+\.fits)', text_content)))
-            urls = [u for u in raw_urls if not u.endswith('.gz')]
-        except Exception as e:
+            
+            filtered_urls = []
+            band_upper = band.strip().upper()
+            date_upper = start_date.strip().upper()
+            end_upper = end_date.strip().upper()
+
+            for u in raw_urls:
+                u_upper = u.upper()
+                if date_upper and date_upper not in u_upper: continue
+                if end_upper and end_upper not in u_upper: continue
+                if band_upper and band_upper not in u_upper: continue
+                filtered_urls.append(u)
+            
+            if (date_upper or band_upper) and len(filtered_urls) == 0:
+                tasks[task_id]["status"] = "error"
+                tasks[task_id]["msg"] = f"Strict filters applied. No images found matching Date: '{start_date}' and Band: '{band}'."
+                return
+
+            urls = filtered_urls if (date_upper or band_upper) else [u for u in raw_urls if not u.endswith('.gz')]
+            
+        except requests.exceptions.RequestException as e:
             tasks[task_id]["status"] = "error"
-            tasks[task_id]["msg"] = "NASA's search server timed out. Try Barnard's Star for the High-Availability demo."
+            tasks[task_id]["msg"] = "NASA's IRSA database took too long to respond. Their servers are currently overloaded. Please try again in a minute."
             return
 
         if not urls:
             tasks[task_id]["status"] = "error"
-            tasks[task_id]["msg"] = "No images found."
+            tasks[task_id]["msg"] = "No images found for these coordinates."
             return
 
         urls.sort()
         available_count = len(urls)
         target_urls = urls[offset : offset + max_frames]
         
+        if offset > 0:
+            notices.append(f"Showing images {offset + 1} to {offset + len(target_urls)} of {available_count}.")
+        elif available_count > max_frames:
+            notices.append(f"Found {available_count} matching images. Showing the first {len(target_urls)}.")
+        
+        tasks[task_id]["notices"] = notices
         tasks[task_id]["total"] = len(target_urls)
         tasks[task_id]["total_available"] = available_count
         
         frames = []
         headers = {'User-Agent': 'Mozilla/5.0'}
-        
+        failed_files = []
+        start_time = time.time()
+
         for i, base_fits_url in enumerate(target_urls):
             tasks[task_id]["progress"] = i + 1
-            tasks[task_id]["status"] = f"Downloading frame {i+1}/{len(target_urls)}..."
+            
+            if i > 0:
+                elapsed = time.time() - start_time
+                avg_time = elapsed / i
+                remaining = len(target_urls) - i
+                eta_sec = int(avg_time * remaining)
+                eta_str = f"{eta_sec}s" if eta_sec < 60 else f"{eta_sec // 60}m {eta_sec % 60}s"
+                tasks[task_id]["status"] = f"Downloading frame {i+1}/{len(target_urls)} (ETA: {eta_str})..."
+            else:
+                tasks[task_id]["status"] = f"Downloading frame 1/{len(target_urls)} (Calculating ETA)..."
 
             cutout_url = f"{base_fits_url}?center={ra},{dec}&size={fov}"
+            
             try:
-                res = requests.get(cutout_url, headers=headers, timeout=(5, 20))
+                res = requests.get(cutout_url, headers=headers, timeout=(5, 30))
                 res.raise_for_status()
                 data = res.content
             except Exception:
-                continue
+                try:
+                    res = requests.get(base_fits_url, headers=headers, timeout=(5, 45))
+                    res.raise_for_status()
+                    data = res.content
+                except Exception as e:
+                    failed_files.append(f"Img {i+1} failed")
+                    continue
 
             if b'SIMPLE' not in data[:100]:
+                failed_files.append(f"Img {i+1} is not FITS.")
                 continue
 
+            tasks[task_id]["status"] = f"Processing FITS data for frame {i+1}..."
             try:
                 with fits.open(io.BytesIO(data)) as hdul:
                     image_data = None
@@ -130,10 +136,12 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
                                 break
                             
                     if image_data is None:
+                        failed_files.append(f"Img {i+1} no 2D data.")
                         continue
 
                     image_data = np.array(image_data, dtype=np.float64)
                     image_data = np.nan_to_num(image_data, nan=0.0, posinf=0.0, neginf=0.0)
+
                     norm = ImageNormalize(image_data, interval=ZScaleInterval())
                     pixel_data = (norm(image_data) * 255).astype(np.uint8)
                     
@@ -145,15 +153,24 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
                     img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
                     frames.append({"url": f"data:image/png;base64,{img_str}", "name": base_fits_url.split('/')[-1]})
             except Exception as e:
+                failed_files.append(f"Img {i+1} err")
                 continue
+            
             del data
             gc.collect()
+
+        if not frames:
+            tasks[task_id]["status"] = "error"
+            tasks[task_id]["msg"] = f"NASA's file server timed out while trying to download the FITS data."
+            return
 
         tasks[task_id]["status"] = "complete"
         tasks[task_id]["frames"] = frames
         tasks[task_id]["fps"] = fps
         tasks[task_id]["offset"] = offset
+
     except Exception as e:
+        traceback.print_exc()
         tasks[task_id]["status"] = "error"
         tasks[task_id]["msg"] = f"Critical Error: {str(e)}"
 
