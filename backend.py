@@ -13,6 +13,8 @@ from PIL import Image
 import time
 import traceback
 import gc
+import tempfile
+import os
 
 app = FastAPI()
 
@@ -38,8 +40,7 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         urls = []
         
         try:
-            # STRICT TIMEOUT: Connect in 5s, Read in 20s
-            response = requests.get(nasaUrl, timeout=(5, 20))
+            response = requests.get(nasaUrl, timeout=(5, 15))
             response.raise_for_status()
             text_content = response.content.decode('utf-8', errors='ignore')
             raw_urls = list(set(re.findall(r'(https?://[^\s<"]+\.fits)', text_content)))
@@ -65,7 +66,7 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
             
         except requests.exceptions.RequestException as e:
             tasks[task_id]["status"] = "error"
-            tasks[task_id]["msg"] = "NASA's IRSA database took too long to respond. Their servers are currently overloaded. Please try again in a minute."
+            tasks[task_id]["msg"] = "NASA's IRSA database took too long to respond. Please try again in a minute."
             return
 
         if not urls:
@@ -88,60 +89,45 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         
         frames = []
         headers = {'User-Agent': 'Mozilla/5.0'}
-        failed_files = []
-        start_time = time.time()
 
         for i, base_fits_url in enumerate(target_urls):
             tasks[task_id]["progress"] = i + 1
-            
-            if i > 0:
-                elapsed = time.time() - start_time
-                avg_time = elapsed / i
-                remaining = len(target_urls) - i
-                eta_sec = int(avg_time * remaining)
-                eta_str = f"{eta_sec}s" if eta_sec < 60 else f"{eta_sec // 60}m {eta_sec % 60}s"
-                tasks[task_id]["status"] = f"Downloading frame {i+1}/{len(target_urls)} (ETA: {eta_str})..."
-            else:
-                tasks[task_id]["status"] = f"Downloading frame 1/{len(target_urls)} (Calculating ETA)..."
+            tasks[task_id]["status"] = f"Downloading frame {i+1}/{len(target_urls)}..."
 
+            # ONLY REQUEST THE CUTOUT. If this fails, we skip the frame (prevents OOM crash)
             cutout_url = f"{base_fits_url}?center={ra},{dec}&size={fov}"
             
             try:
-                res = requests.get(cutout_url, headers=headers, timeout=(5, 30))
-                res.raise_for_status()
-                data = res.content
-            except Exception:
-                try:
-                    res = requests.get(base_fits_url, headers=headers, timeout=(5, 45))
+                # Stream to a temp file on disk to save RAM
+                with requests.get(cutout_url, headers=headers, timeout=(5, 30), stream=True) as res:
                     res.raise_for_status()
-                    data = res.content
-                except Exception as e:
-                    failed_files.append(f"Img {i+1} failed")
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".fits") as tmp:
+                        for chunk in res.iter_content(chunk_size=8192):
+                            tmp.write(chunk)
+                        tmp_path = tmp.name
+
+                if os.path.getsize(tmp_path) < 1000:
+                    os.remove(tmp_path)
                     continue
 
-            if b'SIMPLE' not in data[:100]:
-                failed_files.append(f"Img {i+1} is not FITS.")
-                continue
-
-            tasks[task_id]["status"] = f"Processing FITS data for frame {i+1}..."
-            try:
-                with fits.open(io.BytesIO(data)) as hdul:
+                tasks[task_id]["status"] = f"Processing FITS data for frame {i+1}..."
+                
+                with fits.open(tmp_path, memmap=True) as hdul:
                     image_data = None
                     for hdu in hdul:
                         if hdu.data is not None and hdu.data.ndim >= 2:
                             if hdu.data.shape[0] > 10 and hdu.data.shape[1] > 10:
-                                image_data = hdu.data
+                                # Only copy the 2D slice to RAM
+                                image_data = np.array(hdu.data, dtype=np.float32)
                                 if image_data.ndim == 3:
                                     image_data = image_data[0] 
                                 break
                             
                     if image_data is None:
-                        failed_files.append(f"Img {i+1} no 2D data.")
+                        os.remove(tmp_path)
                         continue
 
-                    image_data = np.array(image_data, dtype=np.float64)
                     image_data = np.nan_to_num(image_data, nan=0.0, posinf=0.0, neginf=0.0)
-
                     norm = ImageNormalize(image_data, interval=ZScaleInterval())
                     pixel_data = (norm(image_data) * 255).astype(np.uint8)
                     
@@ -152,16 +138,20 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
                     img.save(buffered, format="PNG")
                     img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
                     frames.append({"url": f"data:image/png;base64,{img_str}", "name": base_fits_url.split('/')[-1]})
+                
+                # Cleanup
+                os.remove(tmp_path)
+                del image_data, norm, pixel_data, img
+                gc.collect()
+
             except Exception as e:
-                failed_files.append(f"Img {i+1} err")
+                if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
                 continue
-            
-            del data
-            gc.collect()
 
         if not frames:
             tasks[task_id]["status"] = "error"
-            tasks[task_id]["msg"] = f"NASA's file server timed out while trying to download the FITS data."
+            tasks[task_id]["msg"] = "NASA's cutout server timed out while trying to download the FITS data. Please try again."
             return
 
         tasks[task_id]["status"] = "complete"
