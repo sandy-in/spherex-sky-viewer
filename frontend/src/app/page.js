@@ -26,7 +26,6 @@ export default function Home() {
   const [user, setUser] = useState(null);
   const [posts, setPosts] = useState([]);
   
-  // App State
   const [ra, setRa] = useState('269.452');
   const [dec, setDec] = useState('4.693');
   const [fov, setFov] = useState('0.1');
@@ -45,18 +44,15 @@ export default function Home() {
   const [offset, setOffset] = useState(0);
   const [totalAvailable, setTotalAvailable] = useState(0);
 
-  // Subtract & Playback State
   const [diffImage, setDiffImage] = useState(null);
   const [diffContrast, setDiffContrast] = useState(1.0); 
   const [diffInfo, setDiffInfo] = useState({ f1: 0, f2: 0 });
   const [fps, setFps] = useState(3); 
 
-  // AI State
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [showAiOverlay, setShowAiOverlay] = useState(false);
 
-  // Community State
   const [showModal, setShowModal] = useState(false);
   const [note, setNote] = useState('');
   const [shareError, setShareError] = useState(null);
@@ -65,7 +61,7 @@ export default function Home() {
     const client = createClient();
     setSupabase(client);
 
-    // SILENT WAKE UP PING FOR RENDER BACKEND
+    // Wake up Render
     fetch('https://spherex-backend-suez.onrender.com/').catch(() => {});
 
     const handleAuthCallback = async () => {
@@ -112,7 +108,6 @@ export default function Home() {
     setStatusText('Starting job...'); setProgress(0); setTotalProgress(maxFrames);
     setIsPlaying(false); setCurrentIndex(0); setOffset(newOffset); setAiAnalysis(null); setShowAiOverlay(false);
     
-    // 15-second abort controller to catch NASA timeouts quickly
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -137,7 +132,8 @@ export default function Home() {
       const { task_id } = await response.json();
       let isDone = false, attempts = 0;
       
-      while (!isDone && attempts < 150) {
+      // 20 ATTEMPTS (Max 40 seconds waiting)
+      while (!isDone && attempts < 20) {
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
         const statusRes = await fetch(`/api/status/${task_id}`);
@@ -149,7 +145,7 @@ export default function Home() {
         if (statusData.status === "complete") isDone = true;
         else setStatusText(statusData.status);
       }
-      if (!isDone) throw new Error("Request timed out.");
+      if (!isDone) throw new Error("Request timed out. NASA's servers might be down.");
       const imgRes = await fetch(`/api/result/${task_id}`);
       const data = await imgRes.json();
       setFrames(data.frames);
@@ -157,7 +153,6 @@ export default function Home() {
       setTotalAvailable(data.total_available || 0);
       setStatusText('');
     } catch (err) {
-      // ROBUST ERROR HANDLING
       if (err.name === 'AbortError') {
          setErrorMsg("NASA's servers are taking too long to respond (Timeout). Please try again later.");
       } else if (err.message && err.message.includes('Failed to fetch')) {
@@ -184,7 +179,6 @@ export default function Home() {
         setShowAiOverlay(true);
       }
     } catch (err) {
-      // Fallback if AI API fails
       setAiAnalysis({
         summary: "Analysis complete: Infrared image shows multiple stellar sources and a high-proper-motion anomaly in the center.",
         objects: [{ label: "Anomaly", box: [48, 48, 53, 53] }]

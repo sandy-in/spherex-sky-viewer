@@ -27,6 +27,11 @@ app.add_middleware(
 
 tasks = {}
 
+# UP TIME ROBOT HEALTH CHECK
+@app.get("/")
+def health_check():
+    return {"status": "ok", "message": "SPHEREx Backend is running perfectly."}
+
 def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, end_date: str, band: str, max_frames: int, fps: float, offset: int):
     try:
         max_frames = min(max(2, max_frames), 10) 
@@ -40,7 +45,7 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         urls = []
         
         try:
-            # STRICT 5 SECOND TIMEOUT FOR SEARCH
+            # STRICT TIMEOUT: Fail in 5 seconds if NASA is hung
             response = requests.get(nasaUrl, timeout=(3, 5))
             response.raise_for_status()
             text_content = response.content.decode('utf-8', errors='ignore')
@@ -98,7 +103,7 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
             cutout_url = f"{base_fits_url}?center={ra},{dec}&size={fov}"
             
             try:
-                # STRICT 10 SECOND TIMEOUT FOR DOWNLOAD
+                # Stream to temp file to prevent Render OOM crash
                 with requests.get(cutout_url, headers=headers, timeout=(3, 10), stream=True) as res:
                     res.raise_for_status()
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".fits") as tmp:
