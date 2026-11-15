@@ -31,14 +31,15 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         notices = []
         
         nasaUrl = f"https://irsa.ipac.caltech.edu/SIA?POS=circle+{ra}+{dec}+{fov}&COLLECTION=spherex_qr3"
-        tasks[task_id]["status"] = "Contacting NASA servers..."
+        tasks[task_id]["status"] = "Contacting NASA servers (this may take a moment)..."
         tasks[task_id]["progress"] = 0
         tasks[task_id]["total"] = max_frames
         
         urls = []
         for attempt in range(3):
             try:
-                response = requests.get(nasaUrl, timeout=180)
+                # CHANGED TO 45 SECONDS TO FAIL FAST
+                response = requests.get(nasaUrl, timeout=45)
                 response.raise_for_status()
                 text_content = response.content.decode('utf-8', errors='ignore')
                 raw_urls = list(set(re.findall(r'(https?://[^\s<"]+\.fits)', text_content)))
@@ -120,7 +121,7 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
                 data = res.content
             except Exception:
                 try:
-                    res = requests.get(base_fits_url, headers=headers, timeout=180)
+                    res = requests.get(base_fits_url, headers=headers, timeout=45)
                     res.raise_for_status()
                     data = res.content
                 except Exception as e:
@@ -183,7 +184,7 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         tasks[task_id]["msg"] = f"Critical Error: {str(e)}"
 
 @app.post("/api/image")
-def start_job(ra: str, dec: str, fov: str, start_date: str = "", end_date: str = "", band: str = "", max_frames: int = 10, fps: float = 1.0, offset: int = 0, background_tasks: BackgroundTasks = None):
+def start_job(ra: str, dec: str, fov: str, start_date: str = "", end_date: str = "", band: str = "", max_frames: int = 2, fps: float = 1.0, offset: int = 0, background_tasks: BackgroundTasks = None):
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"status": "starting", "frames": None, "msg": "", "fps": fps, "notices": [], "progress": 0, "total": max_frames}
     background_tasks.add_task(process_image, task_id, ra, dec, fov, start_date, end_date, band, max_frames, fps, offset)

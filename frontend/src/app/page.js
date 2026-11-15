@@ -21,7 +21,6 @@ const TARGETS = [
 const InfoTip = ({ text }) => (
   <div className="group relative inline-block ml-2 cursor-help z-50">
     <div className="w-4 h-4 rounded-full bg-gray-600 text-gray-200 text-[10px] font-bold flex items-center justify-center hover:bg-gray-500">i</div>
-    {/* Opens downwards now to avoid being cut off at the top */}
     <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 w-48 p-2 bg-gray-900 border border-gray-600 text-white text-xs rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-center">
       {text}
     </div>
@@ -38,8 +37,6 @@ export default function Home() {
   const [fov, setFov] = useState('0.1');
   const [startDate, setStartDate] = useState('');
   const [band, setBand] = useState('');
-  
-  // Default frames set to 2
   const [maxFrames, setMaxFrames] = useState(2); 
   
   const [loading, setLoading] = useState(false);
@@ -108,7 +105,6 @@ export default function Home() {
     setLoading(true); setFrames([]); setNotices([]); setDiffImage(null); setErrorMsg(null);
     setStatusText('Starting job...'); setProgress(0); 
     
-    // Safety check: If maxFrames is empty or invalid, default to 2
     const framesToFetch = Math.max(2, parseInt(maxFrames) || 2);
     setTotalProgress(framesToFetch);
     
@@ -293,7 +289,6 @@ export default function Home() {
 
         <section className="flex-1 bg-black flex flex-col items-center justify-center relative p-8">
           
-          {/* CENTERED ERROR MESSAGE */}
           {errorMsg && !loading && frames.length === 0 && (
             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-900/90 text-red-200 px-8 py-6 rounded-lg border border-red-700 text-center z-50 shadow-2xl max-w-lg">
               <p className="font-bold text-xl mb-2">⚠️ Connection Error</p>

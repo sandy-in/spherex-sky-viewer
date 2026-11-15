@@ -1,4 +1,4 @@
-export const maxDuration = 60; // Allow up to 60 seconds for Render to wake up
+export const maxDuration = 60; 
 
 export async function POST(request) {
   const { searchParams } = new URL(request.url);
