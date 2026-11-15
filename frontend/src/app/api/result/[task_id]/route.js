@@ -5,11 +5,7 @@ export async function GET(request, { params }) {
   try {
     const pythonUrl = `${backendUrl}/api/result/${task_id}`;
     const response = await fetch(pythonUrl);
-    
-    if (!response.ok) {
-      return new Response("Result not ready", { status: response.status });
-    }
-
+    if (!response.ok) return new Response("Result not ready", { status: response.status });
     const data = await response.json();
     return Response.json(data);
   } catch (error) {

@@ -1,6 +1,5 @@
 export async function POST(request) {
   const { searchParams } = new URL(request.url);
-  
   const ra = searchParams.get('ra');
   const dec = searchParams.get('dec');
   const fov = searchParams.get('fov');
@@ -11,7 +10,6 @@ export async function POST(request) {
   const fps = searchParams.get('fps') || '1';
   const offset = searchParams.get('offset') || '0';
 
-  // Uses the Vercel env variable, or falls back to localhost for Codespaces
   const backendUrl = process.env.NEXT_PUBLIC_PYTHON_URL || 'http://127.0.0.1:8000';
 
   try {
