@@ -57,19 +57,22 @@ export default function Home() {
   const [showModal, setShowModal] = useState(false);
   const [note, setNote] = useState('');
   const [shareError, setShareError] = useState(null);
-  const [replyingTo, setReplyingTo] = useState(null);
-  const [replyContent, setReplyContent] = useState('');
 
   useEffect(() => {
     const client = createClient();
     setSupabase(client);
 
+    // SILENT WAKE UP PING FOR RENDER BACKEND
+    // This pings Render the moment the page loads so it's awake by the time the user clicks Fetch Data
+    fetch('https://spherex-backend-suez.onrender.com/').catch(() => {});
+
     const handleAuthCallback = async () => {
       const url = new URL(window.location.href);
       const code = url.searchParams.get('code');
+      
       if (code) {
-        const { data } = await client.auth.exchangeCodeForSession(code);
-        if (data.session) {
+        const { data, error } = await client.auth.exchangeCodeForSession(code);
+        if (!error && data.session) {
           window.history.replaceState({}, document.title, window.location.pathname);
           setUser(data.session.user);
         }
@@ -85,7 +88,7 @@ export default function Home() {
 
   const fetchPosts = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('posts').select(`*, profiles (full_name, avatar_url), replies (*, profiles (full_name))`).order('created_at', { ascending: false }).limit(20);
+    const { data, error } = await supabase.from('posts').select(`*, profiles (full_name, avatar_url)`).order('created_at', { ascending: false }).limit(20);
     if (!error && data) setPosts(data);
   };
 
@@ -107,7 +110,6 @@ export default function Home() {
     setStatusText('Starting job...'); setProgress(0); setTotalProgress(maxFrames);
     setIsPlaying(false); setCurrentIndex(0); setOffset(newOffset); setAiAnalysis(null); setShowAiOverlay(false);
     
-    // FRONTEND TIMEOUT TO PREVENT INFINITE HANGS
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 65000);
 
@@ -157,23 +159,13 @@ export default function Home() {
     } finally { setLoading(false); }
   };
 
-  const handleAiAnalyze = async () => {
-    if (frames.length === 0) return;
-    setAiLoading(true);
-    try {
-      const response = await fetch('/api/ai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: frames[currentIndex].url })
-      });
-      const data = await response.json();
-      if (data.summary) {
-        setAiAnalysis(data);
-        setShowAiOverlay(true);
-      }
-    } catch (err) {
-      alert("Network error analyzing image.");
-    } finally { setAiLoading(false); }
+  const handleLogin = async () => {
+    if (!supabase) return;
+    // REDIRECT TO ROOT DOMAIN (Fixes 404)
+    await supabase.auth.signInWithOAuth({ 
+      provider: 'google', 
+      options: { redirectTo: window.location.origin } 
+    });
   };
 
   const submitPost = async () => {
@@ -238,7 +230,7 @@ export default function Home() {
               <button onClick={() => supabase.auth.signOut()} className="text-xs text-red-400">Logout</button>
             </div>
           ) : (
-            <button onClick={() => supabase?.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: `${window.location.origin}/auth/callback` } })} className="bg-white text-gray-900 font-bold py-1 px-4 rounded text-sm">Sign in with Google</button>
+            <button onClick={handleLogin} className="bg-white text-gray-900 font-bold py-1 px-4 rounded text-sm hover:bg-gray-200">Sign in with Google</button>
           )}
         </div>
       </header>
@@ -336,7 +328,18 @@ export default function Home() {
                 </button>
               </div>
 
-              <button onClick={handleAiAnalyze} disabled={frames.length === 0 || aiLoading} className="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold text-black flex items-center justify-center">
+              <button onClick={async () => {
+                  setAiLoading(true);
+                  try {
+                    const res = await fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64: frames[currentIndex].url }) });
+                    const data = await res.json();
+                    setAiAnalysis(data); setShowAiOverlay(true);
+                  } catch(e) { alert("AI Error"); }
+                  setAiLoading(false);
+                }} 
+                disabled={frames.length === 0 || aiLoading} 
+                className="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold text-black flex items-center justify-center"
+              >
                 {aiLoading ? 'Analyzing...' : '✨ AI Analyze Image'} 
               </button>
 
