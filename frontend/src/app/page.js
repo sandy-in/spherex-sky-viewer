@@ -6,16 +6,10 @@ import { createClient } from '@/lib/supabase';
 const TARGETS = [
   { name: "Barnard's Star", ra: "269.452", dec: "4.693", desc: "High proper motion star" },
   { name: "WISE 0855", ra: "133.795", dec: "-7.245", desc: "Fast-moving brown dwarf" },
-  { name: "RW Aurigae", ra: "76.956", dec: "30.401", desc: "Variable star" },
-  { name: "R Draconis", ra: "245.18", dec: "66.73", desc: "Variable star" },
-  { name: "Epsilon Indi B", ra: "330.84", dec: "-56.78", desc: "Brown dwarf pair" },
   { name: "M31 (Andromeda)", ra: "10.684", dec: "41.269", desc: "Spiral Galaxy" },
   { name: "M42 (Orion Nebula)", ra: "83.822", dec: "-5.391", desc: "Stellar Nursery" },
   { name: "Pleiades (M45)", ra: "56.75", dec: "24.116", desc: "Star Cluster" },
   { name: "Sirius", ra: "101.287", dec: "-16.716", desc: "Brightest Star" },
-  { name: "Proxima Centauri", ra: "217.429", dec: "-62.679", desc: "Closest Star" },
-  { name: "M1 (Crab Nebula)", ra: "83.633", dec: "22.014", desc: "Supernova Remnant" },
-  { name: "M104 (Sombrero)", ra: "189.997", dec: "-11.623", desc: "Galaxy" }
 ];
 
 const InfoTip = ({ text }) => (
@@ -37,7 +31,7 @@ export default function Home() {
   const [fov, setFov] = useState('0.1');
   const [startDate, setStartDate] = useState('');
   const [band, setBand] = useState('');
-  const [maxFrames, setMaxFrames] = useState(2); 
+  const [maxFrames, setMaxFrames] = useState(4); 
   
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('');
@@ -54,7 +48,7 @@ export default function Home() {
   const [diffImage, setDiffImage] = useState(null);
   const [diffContrast, setDiffContrast] = useState(1.0); 
   const [diffInfo, setDiffInfo] = useState({ f1: 0, f2: 0 });
-  const [fps, setFps] = useState(1);
+  const [fps, setFps] = useState(2);
 
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -97,9 +91,6 @@ export default function Home() {
 
   useEffect(() => { if (supabase) fetchPosts(); }, [supabase]);
 
-  const nearbyPosts = posts.filter(p => Math.abs(p.ra - parseFloat(ra)) < 5 && Math.abs(p.dec - parseFloat(dec)) < 5);
-  const otherPosts = posts.filter(p => !nearbyPosts.includes(p));
-
   const handleSearch = async (e, newOffset = 0) => {
     if (e) e.preventDefault();
     setLoading(true); setFrames([]); setNotices([]); setDiffImage(null); setErrorMsg(null);
@@ -110,9 +101,8 @@ export default function Home() {
     
     setIsPlaying(false); setCurrentIndex(0); setOffset(newOffset); setAiAnalysis(null); setShowAiOverlay(false);
     
-    // 65-second client-side timeout as a safety net
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 65000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
       const query = new URLSearchParams({ 
@@ -128,17 +118,14 @@ export default function Home() {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        if (response.status === 502 || response.status === 504) {
-           throw new Error("The backend is waking up from sleep. Please wait 30 seconds and try again.");
-        }
-        throw new Error("Failed to connect to backend.");
+         throw new Error("Failed to connect to backend.");
       }
       
       const { task_id } = await response.json();
       let isDone = false, attempts = 0;
       
-      while (!isDone && attempts < 150) {
-        await new Promise(r => setTimeout(r, 2000));
+      while (!isDone && attempts < 60) {
+        await new Promise(r => setTimeout(r, 1000));
         attempts++;
         const statusRes = await fetch(`/api/status/${task_id}`);
         if (!statusRes.ok) throw new Error("Lost connection to backend.");
@@ -157,11 +144,7 @@ export default function Home() {
       setTotalAvailable(data.total_available || 0);
       setStatusText('');
     } catch (err) {
-      if (err.name === 'AbortError') {
-         setErrorMsg("Request took too long. NASA's servers might be down or Render is waking up.");
-      } else {
-         setErrorMsg(err.message);
-      }
+      setErrorMsg(err.message);
       setStatusText('');
     } finally { setLoading(false); }
   };
@@ -253,12 +236,18 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-900 text-white font-sans flex flex-col h-screen">
+      
+      {/* HEADER WITH BRANDING */}
       <header className="bg-gray-950 p-4 border-b border-gray-700 flex justify-between items-center shrink-0">
-        <div>
-          <h1 className="text-2xl font-bold text-blue-400 tracking-wider">SPHEREx Sky Viewer</h1>
-          <p className="text-xs text-gray-400">International Discovery Platform</p>
-        </div>
         <div className="flex items-center gap-4">
+          <img src="/logo.png" alt="Paradigm Shifters" className="w-12 h-12 object-contain rounded-full shadow-lg shadow-blue-500/20" />
+          <div>
+            <h1 className="text-2xl font-bold text-blue-400 tracking-wider">SPHEREx Sky Viewer</h1>
+            <p className="text-xs text-gray-400 font-semibold tracking-widest uppercase">PARADIGM SHIFTERS</p>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <p className="text-[10px] text-gray-500">Researcher & Site Builder: <span className="text-gray-300 font-bold">Shanthosh R.</span></p>
           {user ? (
             <div className="flex items-center gap-3 bg-gray-800 px-3 py-1 rounded-full border border-gray-600">
               <img src={user.user_metadata?.avatar_url || 'https://via.placeholder.com/30'} alt="Profile" className="w-8 h-8 rounded-full" />
@@ -307,7 +296,6 @@ export default function Home() {
             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-900/90 text-red-200 px-8 py-6 rounded-lg border border-red-700 text-center z-50 shadow-2xl max-w-lg">
               <p className="font-bold text-xl mb-2">⚠️ Connection Error</p>
               <p>{errorMsg}</p>
-              <p className="text-sm mt-4 text-gray-300">If this is the first request in a while, the backend is waking up. Please wait 30 seconds and click Fetch Data again.</p>
               <button onClick={() => setErrorMsg(null)} className="mt-4 bg-red-700 hover:bg-red-600 px-4 py-2 rounded font-bold">Dismiss</button>
             </div>
           )}
@@ -332,16 +320,9 @@ export default function Home() {
               <div className="w-full aspect-square bg-gray-900 rounded-lg overflow-hidden border border-gray-700 shadow-2xl relative">
                 <img src={diffImage ? diffImage : frames[currentIndex].url} alt="Viewer" className="w-full h-full object-contain" />
                 
+                {/* AI BOUNDING BOXES ONLY */}
                 {showAiOverlay && aiAnalysis && (
                   <div className="absolute inset-0 pointer-events-none z-10">
-                    <div className="absolute top-2 left-2 right-2 bg-black/80 border border-yellow-500 text-yellow-200 p-3 rounded text-sm backdrop-blur-sm pointer-events-auto">
-                      <div className="flex justify-between items-center mb-1 border-b border-yellow-500/30 pb-1">
-                        <strong className="text-yellow-400">🤖 AI Analysis</strong>
-                        <button onClick={() => setShowAiOverlay(false)} className="text-red-400 hover:text-red-300 font-bold">✕</button>
-                      </div>
-                      <p>{aiAnalysis.summary}</p>
-                    </div>
-                    
                     {aiAnalysis.objects && aiAnalysis.objects.map((obj, idx) => (
                       <div key={idx} 
                         className="absolute border-2 border-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.5)]"
@@ -367,13 +348,6 @@ export default function Home() {
               <div className="w-full mt-6 flex items-center space-x-4">
                 <input type="range" min="0" max={frames.length - 1} value={currentIndex} onChange={(e) => { setIsPlaying(false); setDiffImage(null); setShowAiOverlay(false); setCurrentIndex(parseInt(e.target.value)); }} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer" />
               </div>
-              {totalAvailable > maxFrames && (
-                <div className="flex justify-between items-center w-full mt-6 bg-gray-800 p-3 rounded border border-gray-700">
-                  <button onClick={() => handleSearch(null, Math.max(0, offset - maxFrames))} disabled={offset === 0 || loading} className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-900 px-4 py-2 rounded text-sm font-bold">&larr; Previous</button>
-                  <span className="text-gray-400 text-sm">Showing {offset + 1}-{Math.min(offset + maxFrames, totalAvailable)} of {totalAvailable}</span>
-                  <button onClick={() => handleSearch(null, offset + maxFrames)} disabled={offset + maxFrames >= totalAvailable || loading} className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-900 px-4 py-2 rounded text-sm font-bold">Next &rarr;</button>
-                </div>
-              )}
             </div>
           )}
           {!loading && frames.length === 0 && !errorMsg && <div className="text-gray-600 flex flex-col items-center"><p className="text-lg">Select a target and fetch data to begin.</p></div>}
@@ -384,7 +358,10 @@ export default function Home() {
             <h3 className="text-xs font-bold text-blue-300 uppercase tracking-widest mb-4">Playback Controls</h3>
             <div className="space-y-4">
               <div className="flex space-x-2">
-                <button onClick={() => { setDiffImage(null); setShowAiOverlay(false); setIsPlaying(!isPlaying); }} disabled={frames.length === 0} className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold">{isPlaying ? 'Pause' : 'Play'}</button>
+                <button onClick={() => { setDiffImage(null); setShowAiOverlay(false); setIsPlaying(!isPlaying); }} disabled={frames.length === 0} className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold flex items-center justify-center gap-2">
+                  {isPlaying ? '⏸ Pause' : '▶ Play'}
+                  {isPlaying && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>}
+                </button>
                 <button onClick={handleBlink} disabled={frames.length === 0} className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold flex items-center justify-center">
                   Blink <InfoTip text="Flashes between the first and last image." />
                 </button>
@@ -394,6 +371,17 @@ export default function Home() {
                 {aiLoading ? 'Analyzing with AI...' : '✨ AI Analyze Image'} 
                 <InfoTip text="Uses Gemini AI to detect objects and draw bounding boxes." />
               </button>
+
+              {/* AI Summary Box Moved Here */}
+              {showAiOverlay && aiAnalysis && (
+                <div className="bg-black/80 border border-yellow-500 text-yellow-200 p-3 rounded text-sm">
+                  <div className="flex justify-between items-center mb-1 border-b border-yellow-500/30 pb-1">
+                    <strong className="text-yellow-400">🤖 AI Summary</strong>
+                    <button onClick={() => setShowAiOverlay(false)} className="text-red-400 hover:text-red-300 font-bold">✕</button>
+                  </div>
+                  <p>{aiAnalysis.summary}</p>
+                </div>
+              )}
 
               <div className="border border-gray-600 p-3 rounded bg-gray-900">
                 <button onClick={() => handleSubtract()} disabled={frames.length < 2} className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-700 py-2 rounded text-sm font-bold mb-3 flex items-center justify-center">
@@ -409,7 +397,7 @@ export default function Home() {
               </div>
               
               <button onClick={openAladin} className="w-full bg-indigo-600 hover:bg-indigo-500 py-2 rounded text-sm font-bold flex items-center justify-center">
-                Aladin Overlay (Gaia/WISE) <InfoTip text="Opens a professional sky map centered on your coordinates. Use layers to add Gaia or WISE data." />
+                Aladin Overlay (Gaia/WISE) <InfoTip text="Opens a professional sky map." />
               </button>
 
               <div>
@@ -424,18 +412,18 @@ export default function Home() {
               Community Findings
               {frames.length > 0 && user && <button onClick={() => setShowModal(true)} className="bg-green-500 text-white text-xs px-2 py-1 rounded hover:bg-green-400">+ Share</button>}
             </h3>
-            {nearbyPosts.length > 0 && (
-              <div className="mb-6">
-                <h4 className="text-yellow-400 text-xs font-bold mb-2 uppercase tracking-wider">⭐ Nearby this Coordinate</h4>
-                <div className="space-y-3">
-                  {nearbyPosts.map(post => <PostCard key={post.id} post={post} handleLike={handleLike} setReplyingTo={setReplyingTo} replyingTo={replyingTo} replyContent={replyContent} setReplyContent={setReplyContent} submitReply={submitReply} user={user} />)}
-                </div>
-              </div>
-            )}
-            <h4 className="text-gray-400 text-xs font-bold mb-2 uppercase tracking-wider">All Recent Posts</h4>
             <div className="space-y-3 pb-10">
-              {otherPosts.length === 0 && nearbyPosts.length === 0 && <p className="text-xs text-gray-500 text-center">No findings shared yet.</p>}
-              {otherPosts.map(post => <PostCard key={post.id} post={post} handleLike={handleLike} setReplyingTo={setReplyingTo} replyingTo={replyingTo} replyContent={replyContent} setReplyContent={setReplyContent} submitReply={submitReply} user={user} />)}
+              {posts.length === 0 && <p className="text-xs text-gray-500 text-center">No findings shared yet.</p>}
+              {posts.map(post => (
+                <div key={post.id} className="bg-gray-900 p-3 rounded border border-gray-700 text-sm">
+                  {post.image_url && <img src={post.image_url} className="w-full h-32 object-cover rounded mb-2" />}
+                  <div className="flex items-center gap-2 mb-1">
+                    <img src={post.profiles?.avatar_url || 'https://via.placeholder.com/20'} className="w-5 h-5 rounded-full" />
+                    <span className="text-xs text-blue-300 font-bold">{post.profiles?.full_name || 'Unknown User'}</span>
+                  </div>
+                  <div className="text-gray-200 text-xs mb-2">{post.note}</div>
+                </div>
+              ))}
             </div>
           </div>
         </aside>
@@ -455,42 +443,6 @@ export default function Home() {
         </div>
       )}
     </main>
-  );
-}
-
-function PostCard({ post, handleLike, setReplyingTo, replyingTo, replyContent, setReplyContent, submitReply, user }) {
-  const isEdited = new Date(post.updated_at).getTime() > new Date(post.created_at).getTime() + 1000;
-  return (
-    <div className="bg-gray-900 p-3 rounded border border-gray-700 text-sm">
-      {post.image_url && <img src={post.image_url} className="w-full h-32 object-cover rounded mb-2" />}
-      <div className="flex items-center gap-2 mb-1">
-        <img src={post.profiles?.avatar_url || 'https://via.placeholder.com/20'} className="w-5 h-5 rounded-full" />
-        <span className="text-xs text-blue-300 font-bold">{post.profiles?.full_name || 'Unknown User'}</span>
-        <span className="text-[10px] text-gray-500">{new Date(post.created_at).toLocaleDateString()}</span>
-        {isEdited && <span className="text-[10px] text-gray-500 italic">(edited)</span>}
-      </div>
-      <div className="text-gray-200 text-xs mb-2">{post.note}</div>
-      <div className="flex gap-4 text-xs text-gray-400 mb-2">
-        <button onClick={() => handleLike(post.id, post.likes || 0)} className="hover:text-blue-400 flex items-center gap-1">👍 {post.likes || 0}</button>
-        <button onClick={() => setReplyingTo(replyingTo === post.id ? null : post.id)} className="hover:text-blue-400 flex items-center gap-1">💬 Reply</button>
-      </div>
-      {post.replies && post.replies.length > 0 && (
-        <div className="border-l-2 border-gray-700 pl-3 space-y-2 mt-2">
-          {post.replies.map(reply => (
-            <div key={reply.id} className="text-xs">
-              <span className="text-blue-300 font-bold">{reply.profiles?.full_name}: </span>
-              <span className="text-gray-300">{reply.content}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {replyingTo === post.id && user && (
-        <div className="mt-2 flex gap-2">
-          <input type="text" value={replyContent} onChange={(e) => setReplyContent(e.target.value)} placeholder="Write a reply..." className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs" />
-          <button onClick={() => submitReply(post.id)} className="bg-blue-600 text-xs px-3 py-1 rounded">Send</button>
-        </div>
-      )}
-    </div>
   );
 }
 // FINAL LINE - DO NOT DELETE
