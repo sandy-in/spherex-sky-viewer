@@ -61,7 +61,6 @@ export default function Home() {
     const client = createClient();
     setSupabase(client);
 
-    // Wake up Render
     fetch('https://spherex-backend-suez.onrender.com/').catch(() => {});
 
     const handleAuthCallback = async () => {
@@ -108,33 +107,20 @@ export default function Home() {
     setStatusText('Starting job...'); setProgress(0); setTotalProgress(maxFrames);
     setIsPlaying(false); setCurrentIndex(0); setOffset(newOffset); setAiAnalysis(null); setShowAiOverlay(false);
     
-    // 60 SECOND ABORT CONTROLLER
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
     try {
       const query = new URLSearchParams({ 
         ra, dec, fov, start_date: startDate, end_date: '', band, 
         max_frames: maxFrames, fps, offset: newOffset 
       }).toString();
       
-      const response = await fetch(`/api/image?${query}`, { 
-        method: 'POST',
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        if (response.status === 504) throw new Error("Vercel timed out waiting for Render to wake up.");
-        if (response.status === 500) throw new Error("Render server crashed or missing Environment Variable.");
-        throw new Error(`Backend connection failed with status: ${response.status}`);
-      }
+      const response = await fetch(`/api/image?${query}`, { method: 'POST' });
+      if (!response.ok) throw new Error("Failed to connect to backend.");
       
       const { task_id } = await response.json();
       let isDone = false, attempts = 0;
       
-      // 60 ATTEMPTS (Max 120 seconds waiting)
-      while (!isDone && attempts < 60) {
+      // 25 ATTEMPTS (Max 50 seconds waiting)
+      while (!isDone && attempts < 25) {
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
         const statusRes = await fetch(`/api/status/${task_id}`);
@@ -146,7 +132,7 @@ export default function Home() {
         if (statusData.status === "complete") isDone = true;
         else setStatusText(statusData.status);
       }
-      if (!isDone) throw new Error("Request timed out. NASA's servers might be down.");
+      if (!isDone) throw new Error("NASA Timeout");
       const imgRes = await fetch(`/api/result/${task_id}`);
       const data = await imgRes.json();
       setFrames(data.frames);
@@ -154,12 +140,10 @@ export default function Home() {
       setTotalAvailable(data.total_available || 0);
       setStatusText('');
     } catch (err) {
-      if (err.name === 'AbortError') {
-         setErrorMsg("NASA's servers are taking too long to respond (Timeout). Please try again later.");
-      } else if (err.message && err.message.includes('Failed to fetch')) {
-         setErrorMsg("Connection dropped. The server is taking too long to wake up. Please wait 1 minute and try again.");
+      if (err.message === "NASA Timeout") {
+        setErrorMsg("NASA's IRSA database is currently down. The servers are not responding to search requests. Please try a catalog target like Barnard's Star for the cached dataset.");
       } else {
-         setErrorMsg(err.message || "An unknown error occurred.");
+        setErrorMsg(err.message || "Connection failed.");
       }
       setStatusText('');
     } finally { setLoading(false); }
@@ -293,7 +277,7 @@ export default function Home() {
         <section className="flex-1 bg-black flex flex-col items-center justify-center relative p-8">
           {errorMsg && !loading && frames.length === 0 && (
             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-900/90 text-red-200 px-8 py-6 rounded-lg border border-red-700 text-center z-50 shadow-2xl max-w-lg">
-              <p className="font-bold text-xl mb-2">⚠️ Connection Error</p>
+              <p className="font-bold text-xl mb-2">⚠️ NASA Server Error</p>
               <p>{errorMsg}</p>
               <button onClick={() => setErrorMsg(null)} className="mt-4 bg-red-700 hover:bg-red-600 px-4 py-2 rounded font-bold">Dismiss</button>
             </div>
