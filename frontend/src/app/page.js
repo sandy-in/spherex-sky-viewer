@@ -108,8 +108,9 @@ export default function Home() {
     setStatusText('Starting job...'); setProgress(0); setTotalProgress(maxFrames);
     setIsPlaying(false); setCurrentIndex(0); setOffset(newOffset); setAiAnalysis(null); setShowAiOverlay(false);
     
+    // 60 SECOND ABORT CONTROLLER
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
       const query = new URLSearchParams({ 
@@ -132,8 +133,8 @@ export default function Home() {
       const { task_id } = await response.json();
       let isDone = false, attempts = 0;
       
-      // 20 ATTEMPTS (Max 40 seconds waiting)
-      while (!isDone && attempts < 20) {
+      // 60 ATTEMPTS (Max 120 seconds waiting)
+      while (!isDone && attempts < 60) {
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
         const statusRes = await fetch(`/api/status/${task_id}`);

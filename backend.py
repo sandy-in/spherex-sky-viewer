@@ -27,7 +27,6 @@ app.add_middleware(
 
 tasks = {}
 
-# UP TIME ROBOT HEALTH CHECK
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "SPHEREx Backend is running perfectly."}
@@ -45,8 +44,8 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         urls = []
         
         try:
-            # STRICT TIMEOUT: Fail in 5 seconds if NASA is hung
-            response = requests.get(nasaUrl, timeout=(3, 5))
+            # INCREASED TIMEOUT: Wait up to 45s for NASA to respond
+            response = requests.get(nasaUrl, timeout=(10, 45))
             response.raise_for_status()
             text_content = response.content.decode('utf-8', errors='ignore')
             raw_urls = list(set(re.findall(r'(https?://[^\s<"]+\.fits)', text_content)))
@@ -70,9 +69,9 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
 
             urls = filtered_urls if (date_upper or band_upper) else [u for u in raw_urls if not u.endswith('.gz')]
             
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as e:
             tasks[task_id]["status"] = "error"
-            tasks[task_id]["msg"] = "NASA's IRSA database is currently unresponsive due to high traffic. Please try again in a few minutes."
+            tasks[task_id]["msg"] = "NASA's IRSA database took too long to respond. Please try again in a minute."
             return
 
         if not urls:
@@ -103,8 +102,8 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
             cutout_url = f"{base_fits_url}?center={ra},{dec}&size={fov}"
             
             try:
-                # Stream to temp file to prevent Render OOM crash
-                with requests.get(cutout_url, headers=headers, timeout=(3, 10), stream=True) as res:
+                # INCREASED DOWNLOAD TIMEOUT: Wait up to 30s for the file
+                with requests.get(cutout_url, headers=headers, timeout=(10, 30), stream=True) as res:
                     res.raise_for_status()
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".fits") as tmp:
                         for chunk in res.iter_content(chunk_size=8192):
