@@ -57,11 +57,14 @@ export default function Home() {
   const [note, setNote] = useState('');
   const [shareError, setShareError] = useState(null);
 
+  // Direct connection to Render backend bypassing Vercel 60s limits
+  const PYTHON_URL = process.env.NEXT_PUBLIC_PYTHON_URL || 'https://spherex-backend-suez.onrender.com';
+
   useEffect(() => {
     const client = createClient();
     setSupabase(client);
 
-    fetch('https://spherex-backend-suez.onrender.com/').catch(() => {});
+    fetch(`${PYTHON_URL}/`).catch(() => {});
 
     const handleAuthCallback = async () => {
       const url = new URL(window.location.href);
@@ -81,7 +84,7 @@ export default function Home() {
 
     const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null));
     return () => subscription.unsubscribe();
-  }, []);
+  }, [PYTHON_URL]);
 
   const fetchPosts = async () => {
     if (!supabase) return;
@@ -113,17 +116,20 @@ export default function Home() {
         max_frames: maxFrames, fps, offset: newOffset 
       }).toString();
       
-      const response = await fetch(`/api/image?${query}`, { method: 'POST' });
+      // DIRECT CONNECTION TO RENDER
+      const response = await fetch(`${PYTHON_URL}/api/image?${query}`, { method: 'POST' });
       if (!response.ok) throw new Error("Failed to connect to backend.");
       
       const { task_id } = await response.json();
       let isDone = false, attempts = 0;
       
-      // 25 ATTEMPTS (Max 50 seconds waiting)
-      while (!isDone && attempts < 25) {
+      // 90 ATTEMPTS (Max 3 minutes waiting) - Browser has no hard limit!
+      while (!isDone && attempts < 90) {
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
-        const statusRes = await fetch(`/api/status/${task_id}`);
+        
+        // DIRECT CONNECTION FOR POLLING
+        const statusRes = await fetch(`${PYTHON_URL}/api/status/${task_id}`);
         if (!statusRes.ok) throw new Error("Lost connection to backend.");
         const statusData = await statusRes.json();
         if (statusData.progress !== undefined) setProgress(statusData.progress);
@@ -133,7 +139,9 @@ export default function Home() {
         else setStatusText(statusData.status);
       }
       if (!isDone) throw new Error("NASA Timeout");
-      const imgRes = await fetch(`/api/result/${task_id}`);
+      
+      // DIRECT CONNECTION FOR RESULT
+      const imgRes = await fetch(`${PYTHON_URL}/api/result/${task_id}`);
       const data = await imgRes.json();
       setFrames(data.frames);
       setNotices(data.notices || []);

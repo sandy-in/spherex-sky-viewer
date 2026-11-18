@@ -13,7 +13,6 @@ from PIL import Image
 import time
 import traceback
 import gc
-import tempfile
 import os
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -33,8 +32,7 @@ tasks = {}
 def health_check():
     return {"status": "ok", "message": "SPHEREx Backend is running perfectly."}
 
-# Guaranteed verified NASA FITS files for catalog targets
-FALLBACK_URLS = {
+FALLBACK_BASE_URLS = {
     "269.452": [
         "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W20_2A/12b-v27-2026-267/3/level2_2026W20_2A_0058_4D3_spx_12b-v27-2026-267.fits",
         "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W20_2A/12b-v27-2026-267/6/level2_2026W20_2A_0058_4D6_spx_12b-v27-2026-267.fits"
@@ -58,8 +56,8 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         session.mount('https://', HTTPAdapter(max_retries=retries))
 
         try:
-            # INCREASED TO 20 SECONDS FOR SEARCH
-            response = session.get(nasaUrl, timeout=(5, 20))
+            # INCREASED TO 45 SECONDS FOR SEARCH (For M42, Andromeda, etc.)
+            response = session.get(nasaUrl, timeout=(10, 45))
             response.raise_for_status()
             text_content = response.content.decode('utf-8', errors='ignore')
             raw_urls = list(set(re.findall(r'(https?://[^\s<"]+\.fits)', text_content)))
@@ -79,10 +77,10 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
             urls = filtered_urls if (date_upper or band_upper) else [u for u in raw_urls if not u.endswith('.gz')]
             
         except Exception as e:
-            fallback_key = next((key for key in FALLBACK_URLS if ra.startswith(key)), None)
+            fallback_key = next((key for key in FALLBACK_BASE_URLS if ra.startswith(key)), None)
             if fallback_key:
                 notices.append("NASA's search API is currently overwhelmed. Loading verified cached dataset for this target so you can still test the AI.")
-                urls = FALLBACK_URLS[fallback_key]
+                urls = [f"{u}?center={ra},{dec}&size={fov}" for u in FALLBACK_BASE_URLS[fallback_key]]
             else:
                 tasks[task_id]["status"] = "error"
                 tasks[task_id]["msg"] = "NASA's IRSA search database timed out. Please try a catalog target like Barnard's Star for cached data."
@@ -103,28 +101,27 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
         frames = []
         headers = {'User-Agent': 'Mozilla/5.0'}
 
-        for i, base_fits_url in enumerate(target_urls):
+        for i, url in enumerate(target_urls):
             tasks[task_id]["progress"] = i + 1
             tasks[task_id]["status"] = f"Downloading frame {i+1}/{len(target_urls)}..."
 
-            cutout_url = f"{base_fits_url}?center={ra},{dec}&size={fov}"
+            if "center=" not in url:
+                download_url = f"{url}?center={ra},{dec}&size={fov}"
+            else:
+                download_url = url
             
             try:
-                # INCREASED TO 30 SECONDS FOR CUTOUT DOWNLOAD
-                with requests.get(cutout_url, headers=headers, timeout=(5, 30), stream=True) as res:
-                    res.raise_for_status()
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".fits") as tmp:
-                        for chunk in res.iter_content(chunk_size=8192):
-                            tmp.write(chunk)
-                        tmp_path = tmp.name
+                # INCREASED TO 45 SECONDS FOR DOWNLOAD
+                res = requests.get(download_url, headers=headers, timeout=(10, 45))
+                res.raise_for_status()
+                data = res.content
 
-                if os.path.getsize(tmp_path) < 1000:
-                    os.remove(tmp_path)
+                if len(data) < 1000:
                     continue
 
                 tasks[task_id]["status"] = f"Processing FITS data for frame {i+1}..."
                 
-                with fits.open(tmp_path, memmap=True) as hdul:
+                with fits.open(io.BytesIO(data)) as hdul:
                     image_data = None
                     for hdu in hdul:
                         if hdu.data is not None and hdu.data.ndim >= 2:
@@ -135,7 +132,6 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
                                 break
                             
                     if image_data is None:
-                        os.remove(tmp_path)
                         continue
 
                     image_data = np.nan_to_num(image_data, nan=0.0, posinf=0.0, neginf=0.0)
@@ -148,15 +144,12 @@ def process_image(task_id: str, ra: str, dec: str, fov: str, start_date: str, en
                     buffered = io.BytesIO()
                     img.save(buffered, format="PNG")
                     img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-                    frames.append({"url": f"data:image/png;base64,{img_str}", "name": base_fits_url.split('/')[-1]})
+                    frames.append({"url": f"data:image/png;base64,{img_str}", "name": url.split('/')[-1].split('?')[0]})
                 
-                os.remove(tmp_path)
-                del image_data, norm, pixel_data, img
+                del data, image_data, norm, pixel_data, img
                 gc.collect()
 
-            except Exception:
-                if 'tmp_path' in locals() and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+            except Exception as e:
                 continue
 
         if not frames:
