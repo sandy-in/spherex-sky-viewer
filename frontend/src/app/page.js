@@ -123,12 +123,11 @@ export default function Home() {
       const { task_id } = await response.json();
       let isDone = false, attempts = 0;
       
-      // 90 ATTEMPTS (Max 3 minutes waiting) - Browser has no hard limit!
+      // 90 ATTEMPTS (Max 3 minutes waiting)
       while (!isDone && attempts < 90) {
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
         
-        // DIRECT CONNECTION FOR POLLING
         const statusRes = await fetch(`${PYTHON_URL}/api/status/${task_id}`);
         if (!statusRes.ok) throw new Error("Lost connection to backend.");
         const statusData = await statusRes.json();
@@ -140,7 +139,6 @@ export default function Home() {
       }
       if (!isDone) throw new Error("NASA Timeout");
       
-      // DIRECT CONNECTION FOR RESULT
       const imgRes = await fetch(`${PYTHON_URL}/api/result/${task_id}`);
       const data = await imgRes.json();
       setFrames(data.frames);
@@ -160,6 +158,7 @@ export default function Home() {
   const handleAiAnalyze = async () => {
     if (frames.length === 0) return;
     setAiLoading(true);
+    setErrorMsg(null); // Clear any previous errors
     try {
       const response = await fetch('/api/ai', {
         method: 'POST',
@@ -167,16 +166,16 @@ export default function Home() {
         body: JSON.stringify({ imageBase64: frames[currentIndex].url })
       });
       const data = await response.json();
-      if (data.summary) {
+      
+      if (data.error) {
+        // If Google rejects the API key or request, show it clearly
+        setErrorMsg(`AI Error: ${data.error}`);
+      } else if (data.summary) {
         setAiAnalysis(data);
         setShowAiOverlay(true);
       }
     } catch (err) {
-      setAiAnalysis({
-        summary: "Analysis complete: Infrared image shows multiple stellar sources and a high-proper-motion anomaly in the center.",
-        objects: [{ label: "Anomaly", box: [48, 48, 53, 53] }]
-      });
-      setShowAiOverlay(true);
+      setErrorMsg("Failed to connect to AI API.");
     } finally { setAiLoading(false); }
   };
 
@@ -285,7 +284,7 @@ export default function Home() {
         <section className="flex-1 bg-black flex flex-col items-center justify-center relative p-8">
           {errorMsg && !loading && frames.length === 0 && (
             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-900/90 text-red-200 px-8 py-6 rounded-lg border border-red-700 text-center z-50 shadow-2xl max-w-lg">
-              <p className="font-bold text-xl mb-2">⚠️ NASA Server Error</p>
+              <p className="font-bold text-xl mb-2">⚠️ Connection Error</p>
               <p>{errorMsg}</p>
               <button onClick={() => setErrorMsg(null)} className="mt-4 bg-red-700 hover:bg-red-600 px-4 py-2 rounded font-bold">Dismiss</button>
             </div>
