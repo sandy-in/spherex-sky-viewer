@@ -57,7 +57,6 @@ export default function Home() {
   const [note, setNote] = useState('');
   const [shareError, setShareError] = useState(null);
 
-  // Direct connection to Render backend bypassing Vercel 60s limits
   const PYTHON_URL = process.env.NEXT_PUBLIC_PYTHON_URL || 'https://spherex-backend-suez.onrender.com';
 
   useEffect(() => {
@@ -116,14 +115,12 @@ export default function Home() {
         max_frames: maxFrames, fps, offset: newOffset 
       }).toString();
       
-      // DIRECT CONNECTION TO RENDER
       const response = await fetch(`${PYTHON_URL}/api/image?${query}`, { method: 'POST' });
       if (!response.ok) throw new Error("Failed to connect to backend.");
       
       const { task_id } = await response.json();
       let isDone = false, attempts = 0;
       
-      // 90 ATTEMPTS (Max 3 minutes waiting)
       while (!isDone && attempts < 90) {
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
@@ -158,7 +155,6 @@ export default function Home() {
   const handleAiAnalyze = async () => {
     if (frames.length === 0) return;
     setAiLoading(true);
-    setErrorMsg(null); // Clear any previous errors
     try {
       const response = await fetch('/api/ai', {
         method: 'POST',
@@ -168,14 +164,14 @@ export default function Home() {
       const data = await response.json();
       
       if (data.error) {
-        // If Google rejects the API key or request, show it clearly
-        setErrorMsg(`AI Error: ${data.error}`);
+        // Show the exact error from Google/Vercel
+        alert(`AI Error: ${data.error}`);
       } else if (data.summary) {
         setAiAnalysis(data);
         setShowAiOverlay(true);
       }
     } catch (err) {
-      setErrorMsg("Failed to connect to AI API.");
+      alert(`Network Error: ${err.message}`);
     } finally { setAiLoading(false); }
   };
 
